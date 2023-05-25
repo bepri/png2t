@@ -251,6 +251,7 @@ impl<'args> Media<'args> {
             // Thus that method made it unable to play audio and render the video unless a little code duplication is done.
             if self.has_audio {
                 use rodio::{source::Source, Decoder, OutputStream};
+                use std::thread;
 
                 while {
                     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
@@ -258,9 +259,12 @@ impl<'args> Media<'args> {
                     let source = Decoder::new(BufReader::new(
                         File::open(&self.storage.join("audio.mp3")).unwrap(),
                     ));
-                    stream_handle
-                        .play_raw(source.unwrap().convert_samples())
-                        .unwrap();
+
+                    let audio_thread_handle = thread::spawn(move || {
+                        stream_handle
+                            .play_raw(source.unwrap().convert_samples())
+                            .unwrap();
+                    });
 
                     for frame in &self.frames {
                         self.display_frame(frame, w, h)?;
@@ -271,6 +275,7 @@ impl<'args> Media<'args> {
                             print!("\x1b[1A\x1b[2K");
                         }
                     }
+                    audio_thread_handle.join().unwrap();
                     self.config.loop_video
                 } {}
             } else {
