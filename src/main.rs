@@ -7,7 +7,7 @@ use crate::helpers::*;
 #[command(
     name = "png2t",
     author = "imani@bepri.dev",
-    version = "0.0.1",
+    version = "0.1.1",
     about = "A command-line tool to render a PNG to the terminal."
 )]
 pub struct Args {
@@ -33,7 +33,10 @@ pub struct Args {
     preserve_dims: bool,
 
     #[arg(long, id = "loop")]
-    loop_video: bool
+    loop_video: bool,
+
+    #[arg(help = "Mute audio if any is present", long)]
+    mute: bool,
 }
 
 fn main() -> Result<(), String> {
@@ -44,8 +47,7 @@ fn main() -> Result<(), String> {
         Ok(m) => m,
     };
 
-    media.generate_frames();
-    media.load_frames()?;
+    media.unpack_file()?;
     media.transform()?;
     media.render()?;
 
