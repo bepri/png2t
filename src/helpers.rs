@@ -70,6 +70,8 @@ impl<'args> Media<'args> {
                 "-i",
                 &self.config.file,
                 self.storage.join("frame%d.png").to_str().unwrap(),
+                "-preset",
+                "ultrafast",
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -86,6 +88,8 @@ impl<'args> Media<'args> {
                     "-i",
                     &self.config.file,
                     self.storage.join("audio.mp3").to_str().unwrap(),
+                    "-preset",
+                    "ultrafast",
                 ])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -110,6 +114,7 @@ impl<'args> Media<'args> {
             .map(|r| String::from(r.unwrap().path().to_str().unwrap())) // Unwrap ReadDir into a DirEntry, which is still not a sortable plain string. Thus, pull the `path()` from it, then cast it to a string, then wrap it in `String::from()` for ownership reasons
             .sorted_by(|a, b| human_sort::compare(a, b)) // Apply human-sort
             .map(PathBuf::from) // Cast the list of sorted strings into Path objects instead
+            .filter(|p| p.extension().unwrap() == "png")
             .collect(); // Collect into the final vector
 
         for (idx, frame) in frames.iter().enumerate() {
@@ -121,7 +126,6 @@ impl<'args> Media<'args> {
                     e
                 ));
             }
-
             let decoder = reader.unwrap().decode();
             if let Err(e) = decoder {
                 return Err(format!(
