@@ -282,7 +282,7 @@ impl<'args> Media<'args> {
 
                         // Clear terminal for next frame
                         for _ in 0..h / 2 {
-                            print!("\x1b[1A\x1b[2K");
+                            print!("\x1b[1A");
                         }
                     }
                     self.config.loop_video
