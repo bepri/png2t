@@ -6,6 +6,11 @@ use std::{
     time::Duration,
 };
 
+use crossterm::{
+    event::{read, Event, KeyCode, poll, KeyEvent, KeyModifiers},
+    terminal::{disable_raw_mode, enable_raw_mode},
+    cursor::{position, MoveDown, MoveUp, MoveToColumn, MoveTo},
+};
 use image::{
     imageops::{flip_horizontal_in_place, flip_vertical_in_place, resize, FilterType::Nearest},
     ImageBuffer, Rgba,
@@ -247,22 +252,41 @@ impl<'args> Media<'args> {
             // Based on the fps, calculate how long to wait between each frame printing
             let delay = std::time::Duration::from_millis((1000.0 / fps) as u64);
 
+            // Create buffer space in the terminal for the image before printing
+            let h = self.frames[0].dimensions().1/2;
+            for _ in 0..h {
+                println!();
+            }
+
+            // Turn off the fancy stuff in the terminal. I'm using this to later emulate C's `getchar` 
+            enable_raw_mode().unwrap();
+
+            // Reset cursor to where the top-left pixel should print
+            print!("{}{}", MoveToColumn(0), MoveUp(h as u16));
+
+            // Save this location for quicker cursor resets when new frames are printed
+            let pos = position().unwrap();
+
             // Rust's deallocation methods kill the audio if it is in a separate block from the video rendering.
             // This means it won't be able to play if we slim down on repeated code by only using this if/else tree to spawn the audio when true.
             // This is my least favorite piece of code
-            if self.has_audio {
-                while {
-                    // Spawn the audio and keep it from deallocating with `let`
+            loop {
+                // Spawn the audio and keep it from deallocating with `let`
+                let res = if self.has_audio {
                     let _audio = self.spawn_audio();
-                    self.play_video(delay)?;
-                    self.config.loop_video
-                } {}
-            } else {
-                while { 
-                    self.play_video(delay)?;
-                    self.config.loop_video
-                } {}
+                    self.play_video(delay, pos)
+                } else {
+                    self.play_video(delay, pos)
+                };
+
+                // Keep playing if true, otherwise the user requested an early exit (or loop_video == false)
+                match res? {
+                    true => continue,
+                    false => break,
+                };
             }
+
+            disable_raw_mode().unwrap();
         } else {
             // If we just have an image, we simply gotta display it
             self.display_frame(&self.frames[0])?;
@@ -307,7 +331,7 @@ impl<'args> Media<'args> {
             if x == w - 1 {
                 x = 0;
                 y += 2;
-                println!();
+                print!("{}{}", MoveDown(1), MoveToColumn(0));
             } else {
                 x += 1;
             }
@@ -317,26 +341,34 @@ impl<'args> Media<'args> {
     }
 
     /// Plays a video stored in `self.frames`
-    /// 
+    ///
+    /// # Returns
+    /// `Ok(bool)` will be true if the video should continue playing.
+    /// This is only with regards to whether or not the user has attempted to "quit" the program, and does not concern the loop_video option.
+    ///
     /// # Errors
     /// Can fail on I/O from `self.display_frame()`
-    fn play_video(&self, delay: Duration) -> Result<(), String> {
-        let h = self.frames[0].dimensions().1;
+    fn play_video(&self, delay: Duration, pos: (u16, u16)) -> Result<bool, String> {
         for frame in &self.frames {
             self.display_frame(frame)?;
             std::thread::sleep(delay); // Pause between frames to preserve framerate
 
-            // Clear terminal for next frame
-            for _ in 0..h / 2 {
-                print!("\x1b[1A");
+            if poll(Duration::from_millis(1)).unwrap() {
+                let event = read().unwrap();
+                if [Event::Key(KeyCode::Char('q').into()), Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))].contains(&event) {
+                    return Ok(false);
+                }
             }
+
+            // Reset cursor for next frame and overwrite old frame
+            print!("{}", MoveTo(pos.0, pos.1));
         }
 
-        Ok(())
+        Ok(self.config.loop_video)
     }
 
     /// Creates an audio thread to play sound exactly once.
-    /// 
+    ///
     /// Pulls audio from `%self.storage%/audio.mp3` and returns a handle on the audio.
     fn spawn_audio(&self) -> (OutputStream, OutputStreamHandle) {
         use rodio::{source::Source, Decoder};
