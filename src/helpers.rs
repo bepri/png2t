@@ -3,6 +3,7 @@ use std::{
     io::{BufReader, Write},
     path::PathBuf,
     process::{Command, Stdio},
+    time::Duration,
 };
 
 use image::{
@@ -12,6 +13,7 @@ use image::{
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use regex::Regex;
+use rodio::{OutputStream, OutputStreamHandle};
 
 use crate::Args;
 
@@ -247,44 +249,19 @@ impl<'args> Media<'args> {
             // Based on the fps, calculate how long to wait between each frame printing
             let delay = std::time::Duration::from_millis((1000.0 / fps) as u64);
 
-            // Due to what appear to be Rust optimization tricks, the audio child thread is killed if it is inside of its own `if self.has_audio` block.
-            // Thus that method made it unable to play audio and render the video unless a little code duplication is done.
+            // Rust's deallocation methods kill the audio if it is in a separate block from the video rendering.
+            // This means it won't be able to play if we slim down on repeated code by only using this if/else tree to spawn the audio when true.
+            // This is my least favorite piece of code
             if self.has_audio {
-                use rodio::{source::Source, Decoder, OutputStream};
-
                 while {
-                    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-
-                    let source = Decoder::new(BufReader::new(
-                        File::open(&self.storage.join("audio.mp3")).unwrap(),
-                    ));
-                    stream_handle
-                        .play_raw(source.unwrap().convert_samples())
-                        .unwrap();
-
-                    for frame in &self.frames {
-                        self.display_frame(frame, w, h)?;
-                        std::thread::sleep(delay); // Pause between frames to preserve framerate
-
-                        // Clear terminal for next frame
-                        for _ in 0..h / 2 {
-                            print!("\x1b[1A\x1b[2K");
-                        }
-                    }
+                    // Spawn the audio and keep it from deallocating with `let`
+                    let _audio = self.spawn_audio();
+                    self.play_video(delay)?;
                     self.config.loop_video
                 } {}
             } else {
-                // Rustic do-while loop lol
-                while {
-                    for frame in &self.frames {
-                        self.display_frame(frame, w, h)?;
-                        std::thread::sleep(delay); // Pause between frames to preserve framerate
-
-                        // Clear terminal for next frame
-                        for _ in 0..h / 2 {
-                            print!("\x1b[1A");
-                        }
-                    }
+                while { 
+                    self.play_video(delay)?;
                     self.config.loop_video
                 } {}
             }
@@ -296,7 +273,7 @@ impl<'args> Media<'args> {
     }
 
     /// Interal function to display one image into the terminal.
-    /// 
+    ///
     /// # Errors
     /// I/O errors can occur when flushing `stdout`
     fn display_frame(&self, frame: &Image, w: u32, h: u32) -> Result<(), String> {
@@ -340,8 +317,39 @@ impl<'args> Media<'args> {
         Ok(())
     }
 
+    fn play_video(&self, delay: Duration) -> Result<(), String> {
+        let (w, h) = self.frames[0].dimensions();
+        for frame in &self.frames {
+            self.display_frame(frame, w, h)?;
+            std::thread::sleep(delay); // Pause between frames to preserve framerate
+
+            // Clear terminal for next frame
+            for _ in 0..h / 2 {
+                print!("\x1b[1A");
+            }
+        }
+
+        Ok(())
+    }
+
+    fn spawn_audio(&self) -> (OutputStream, OutputStreamHandle) {
+        use rodio::{source::Source, Decoder};
+
+        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+
+        let source = Decoder::new(BufReader::new(
+            File::open(self.storage.join("audio.mp3")).unwrap(),
+        ));
+
+        stream_handle
+            .play_raw(source.unwrap().convert_samples())
+            .unwrap();
+
+        (_stream, stream_handle)
+    }
+
     /// Generate a path to a temporary directory
-    /// 
+    ///
     /// Does not create the directory. This mostly exists as an easy location to modify the temporary storage solution later if needed in later versions of this.
     fn get_tmp_dir() -> PathBuf {
         let mut res = std::env::current_exe().unwrap();
