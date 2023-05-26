@@ -7,9 +7,9 @@ use std::{
 };
 
 use crossterm::{
-    event::{read, Event, KeyCode, poll, KeyEvent, KeyModifiers},
+    cursor::{position, MoveDown, MoveTo, MoveToColumn, MoveUp},
+    event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
-    cursor::{position, MoveDown, MoveUp, MoveToColumn, MoveTo},
 };
 use image::{
     imageops::{flip_horizontal_in_place, flip_vertical_in_place, resize, FilterType::Nearest},
@@ -76,7 +76,7 @@ impl<'args> Media<'args> {
                 "-hide_banner",
                 "-i",
                 &self.config.file,
-                self.storage.join("frame%d.png").to_str().unwrap(),
+                self.storage.join("frame%d.exr").to_str().unwrap(),
                 "-preset",
                 "ultrafast",
             ])
@@ -121,7 +121,7 @@ impl<'args> Media<'args> {
             .map(|r| String::from(r.unwrap().path().to_str().unwrap())) // Unwrap ReadDir into a DirEntry, which is still not a sortable plain string. Thus, pull the `path()` from it, then cast it to a string, then wrap it in `String::from()` for ownership reasons
             .sorted_by(|a, b| human_sort::compare(a, b)) // Apply human-sort
             .map(PathBuf::from) // Cast the list of sorted strings into Path objects instead
-            .filter(|p| p.extension().unwrap() == "png")
+            .filter(|p| p.extension().unwrap() == "exr")
             .collect(); // Collect into the final vector
 
         for (idx, frame) in frames.iter().enumerate() {
@@ -222,6 +222,21 @@ impl<'args> Media<'args> {
     /// Also may fail on I/O or sound device errors.
     /// Can possibly fail on file I/O, but is only possible by race condition with another program modifying the storage directory.
     pub fn render(&self) -> Result<(), String> {
+        // Create buffer space in the terminal for the image before printing
+        let h = self.frames[0].dimensions().1 / 2;
+        for _ in 0..h {
+            println!();
+        }
+
+        // Turn off the fancy stuff in the terminal. I'm using this to later emulate C's `getchar`
+        enable_raw_mode().unwrap();
+
+        // Reset cursor to where the top-left pixel should print
+        print!("{}{}", MoveToColumn(0), MoveUp(h as u16));
+
+        // Save this location for quicker cursor resets when new frames are printed
+        let pos = position().unwrap();
+
         // The code to play a video is a lot more complex, so it's not worthwhile to try to generalize this for photos vs. videos
         if self.is_video {
             // Following block uses regex to extract the video's fps from the output of `ffprobe`
@@ -252,21 +267,6 @@ impl<'args> Media<'args> {
             // Based on the fps, calculate how long to wait between each frame printing
             let delay = std::time::Duration::from_millis((1000.0 / fps) as u64);
 
-            // Create buffer space in the terminal for the image before printing
-            let h = self.frames[0].dimensions().1/2;
-            for _ in 0..h {
-                println!();
-            }
-
-            // Turn off the fancy stuff in the terminal. I'm using this to later emulate C's `getchar` 
-            enable_raw_mode().unwrap();
-
-            // Reset cursor to where the top-left pixel should print
-            print!("{}{}", MoveToColumn(0), MoveUp(h as u16));
-
-            // Save this location for quicker cursor resets when new frames are printed
-            let pos = position().unwrap();
-
             // Rust's deallocation methods kill the audio if it is in a separate block from the video rendering.
             // This means it won't be able to play if we slim down on repeated code by only using this if/else tree to spawn the audio when true.
             // This is my least favorite piece of code
@@ -285,12 +285,12 @@ impl<'args> Media<'args> {
                     false => break,
                 };
             }
-
-            disable_raw_mode().unwrap();
         } else {
             // If we just have an image, we simply gotta display it
             self.display_frame(&self.frames[0])?;
         }
+
+        disable_raw_mode().unwrap();
         Ok(())
     }
 
@@ -355,7 +355,12 @@ impl<'args> Media<'args> {
 
             if poll(Duration::from_millis(1)).unwrap() {
                 let event = read().unwrap();
-                if [Event::Key(KeyCode::Char('q').into()), Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))].contains(&event) {
+                if [
+                    Event::Key(KeyCode::Char('q').into()),
+                    Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+                ]
+                .contains(&event)
+                {
                     return Ok(false);
                 }
             }
