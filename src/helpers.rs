@@ -217,8 +217,6 @@ impl<'args> Media<'args> {
     /// Also may fail on I/O or sound device errors.
     /// Can possibly fail on file I/O, but is only possible by race condition with another program modifying the storage directory.
     pub fn render(&self) -> Result<(), String> {
-        let (w, h) = self.frames[0].dimensions();
-
         // The code to play a video is a lot more complex, so it's not worthwhile to try to generalize this for photos vs. videos
         if self.is_video {
             // Following block uses regex to extract the video's fps from the output of `ffprobe`
@@ -267,7 +265,7 @@ impl<'args> Media<'args> {
             }
         } else {
             // If we just have an image, we simply gotta display it
-            self.display_frame(&self.frames[0], w, h)?;
+            self.display_frame(&self.frames[0])?;
         }
         Ok(())
     }
@@ -276,7 +274,8 @@ impl<'args> Media<'args> {
     ///
     /// # Errors
     /// I/O errors can occur when flushing `stdout`
-    fn display_frame(&self, frame: &Image, w: u32, h: u32) -> Result<(), String> {
+    fn display_frame(&self, frame: &Image) -> Result<(), String> {
+        let (w, h) = frame.dimensions();
         let (mut x, mut y) = (0u32, 0u32);
         for _ in 0..(h / 2) * w {
             let upper = frame.get_pixel(x, y);
@@ -322,9 +321,9 @@ impl<'args> Media<'args> {
     /// # Errors
     /// Can fail on I/O from `self.display_frame()`
     fn play_video(&self, delay: Duration) -> Result<(), String> {
-        let (w, h) = self.frames[0].dimensions();
+        let h = self.frames[0].dimensions().1;
         for frame in &self.frames {
-            self.display_frame(frame, w, h)?;
+            self.display_frame(frame)?;
             std::thread::sleep(delay); // Pause between frames to preserve framerate
 
             // Clear terminal for next frame
