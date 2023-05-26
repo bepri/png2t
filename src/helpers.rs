@@ -317,6 +317,10 @@ impl<'args> Media<'args> {
         Ok(())
     }
 
+    /// Plays a video stored in `self.frames`
+    /// 
+    /// # Errors
+    /// Can fail on I/O from `self.display_frame()`
     fn play_video(&self, delay: Duration) -> Result<(), String> {
         let (w, h) = self.frames[0].dimensions();
         for frame in &self.frames {
@@ -332,19 +336,26 @@ impl<'args> Media<'args> {
         Ok(())
     }
 
+    /// Creates an audio thread to play sound exactly once.
+    /// 
+    /// Pulls audio from `%self.storage%/audio.mp3` and returns a handle on the audio.
     fn spawn_audio(&self) -> (OutputStream, OutputStreamHandle) {
         use rodio::{source::Source, Decoder};
 
+        // Open up audio handles and bind them to avoid deallocation. This line may panic if there is no audio device present.
         let (_stream, stream_handle) = OutputStream::try_default().unwrap();
 
+        // Open up the audio file. Unwraps should never panic unless a race condition is created
         let source = Decoder::new(BufReader::new(
             File::open(self.storage.join("audio.mp3")).unwrap(),
         ));
 
+        // Play!
         stream_handle
             .play_raw(source.unwrap().convert_samples())
             .unwrap();
 
+        // This return ensures these are not deallocated, which would kill the audio thread.
         (_stream, stream_handle)
     }
 
