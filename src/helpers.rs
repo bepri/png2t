@@ -357,6 +357,7 @@ impl<'args> Media<'args> {
                 let event = read().unwrap();
                 if [
                     Event::Key(KeyCode::Char('q').into()),
+                    Event::Key(KeyCode::Esc.into()),
                     Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
                 ]
                 .contains(&event)
