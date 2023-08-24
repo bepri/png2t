@@ -241,7 +241,7 @@ impl<'args> Media<'args> {
         if self.is_video {
             // Following block uses regex to extract the video's fps from the output of `ffprobe`
             lazy_static! {
-                static ref RE: Regex = Regex::new(r#"(\d*\.?\d*) fps"#).unwrap();
+                static ref RE: Regex = Regex::new(r"(\d*\.?\d*) fps").unwrap();
             }
 
             let fps: f32;
