@@ -14,3 +14,6 @@ itertools = "0.10.5"
 lazy_static = "1.4.0"
 regex = "1.8.2"
 rodio = "0.17.1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.51", features = ["Win32_Foundation", "Win32_System_Console"]}
