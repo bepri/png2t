@@ -6,6 +6,7 @@ readme = "README.md"
 repository = "https://github.com/bepri/png2t"
 license = "MIT"
 description = "Render any media file supported by FFMPEG into your terminal!"
+categories = ["command-line-utilities"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
