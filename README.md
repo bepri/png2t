@@ -5,9 +5,6 @@
   </p>
 </div>
 
-## Examples
-TODO lol
-
 ## What?
 png2t is a fun little program that allows you to print out image or play a video format in a shell, so long as the shell supports ANSI escape codes!
 
@@ -20,9 +17,7 @@ It's cool!
 # Building
 ## Unix
 ### 1. Install `cargo` to your system
-```
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
+Visit https://rustup.rs/ for installation instructions!
 
 ### 2. Install `ffmpeg`
 Debian-based:
