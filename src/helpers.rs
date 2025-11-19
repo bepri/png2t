@@ -170,15 +170,8 @@ impl<'args> Media<'args> {
         // The following block calculates the final image size. Multiple factors influence it so it's best to calculate it once.
         // This means we can't support dynamically resizing .mp4s and such, but I think that's okay... (sorry Discord trolls)
         if let Some(s) = &self.config.size {
-            let coords: Vec<u32> = s.split('x').map(|c| str::parse(c).unwrap_or(0)).collect();
-            if coords.contains(&0) {
-                return Err(String::from(
-                    "Invalid coordinates supplied to --size tag: must be in format NUMxNUM",
-                ));
-            }
-
-            nwidth = coords[0];
-            nheight = coords[1];
+            nwidth = s.width;
+            nheight = s.height;
         } else if !self.config.preserve_dims {
             // Set the longest side to be 64px, with the shorter side scaling down proportionally to preserve aspect ratio
             (nwidth, nheight) = match nwidth > nheight {
@@ -324,7 +317,7 @@ impl<'args> Media<'args> {
             }
 
             if let Err(e) = std::io::stdout().flush() {
-                return Err(format!("\nFailed to print image at ({}, {}): {}", x, y, e));
+                return Err(format!("\nFailed to print image at ({x}, {y}): {e}"));
             }
 
             // Arithmetic to keep cursor in the right position to print
