@@ -1,6 +1,9 @@
+//! CLI parsing
+
 use anyhow::{Context, Result};
 
 pub use clap::Parser;
+use clap::{crate_name, crate_version};
 
 #[derive(Clone, Debug)]
 pub struct Dimensions {
@@ -25,9 +28,8 @@ impl Dimensions {
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "png2t",
-    author = "imani@bepri.dev",
-    version = "0.1.2",
+    name = crate_name!(),
+    version = crate_version!(),
     about = "A command-line tool to render a PNG to the terminal."
 )]
 pub struct Args {

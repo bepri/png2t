@@ -1,11 +1,15 @@
+//! Media processing
+
 use std::{
     fs::{self, File},
     io::{BufReader, Write},
     path::PathBuf,
     process::{Command, Stdio},
+    sync::OnceLock,
     time::Duration,
 };
 
+use anyhow::{bail, Context, Result};
 use crossterm::{
     cursor::{position, MoveDown, MoveTo, MoveToColumn, MoveUp},
     event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -16,7 +20,6 @@ use image::{
     ImageBuffer, Rgba,
 };
 use itertools::Itertools;
-use lazy_static::lazy_static;
 use regex::Regex;
 use rodio::{OutputStream, OutputStreamHandle};
 
@@ -39,23 +42,11 @@ pub struct Media<'args> {
 }
 
 impl<'args> Media<'args> {
-    pub fn new(config: &'args Args) -> Result<Self, String> {
-        let storage = Self::get_tmp_dir();
-
-        if !storage.exists() {
-            if let Err(e) = fs::create_dir(&storage) {
-                return Err(format!(
-                    "Unable to create output directory at {}: {}",
-                    storage.display(),
-                    e
-                ));
-            }
-        }
-
+    pub fn new(config: &'args Args) -> Result<Self> {
         Ok(Media::<'args> {
             frames: Vec::default(),
             config,
-            storage,
+            storage: Self::get_tmp_dir()?,
             is_video: false,
             has_audio: false,
         })
@@ -69,7 +60,7 @@ impl<'args> Media<'args> {
     ///
     /// # Errors
     /// Generally the only failure possible at this point is ffmpeg not being installed, which will return an OS error 2.
-    pub fn unpack_file(&mut self) -> Result<(), String> {
+    pub fn unpack_file(&mut self) -> Result<()> {
         // Separate out the individual frames
         Command::new("ffmpeg")
             .args([
@@ -114,7 +105,7 @@ impl<'args> Media<'args> {
     /// # Errors
     /// Can either fail to access the temporary storage directory or individual files, or encounter an invalid PNG.
     /// These issues are unlikely but could be caused by a race condition with another program modifying `self.storage` during execution.
-    fn load_frames(&mut self) -> Result<(), String> {
+    fn load_frames(&mut self) -> Result<()> {
         // Objective: get a list of all files in a directory in human-sorted order
         let frames: Vec<PathBuf> = fs::read_dir(&self.storage) // gets all files in `&self.storage`
             .unwrap()
@@ -127,7 +118,7 @@ impl<'args> Media<'args> {
         for (idx, frame) in frames.iter().enumerate() {
             let reader = image::io::Reader::open(frame);
             if let Err(e) = reader {
-                return Err(format!(
+                bail!(format!(
                     "Unable to read from temp directory {}: {}",
                     self.storage.display(),
                     e
@@ -135,7 +126,7 @@ impl<'args> Media<'args> {
             }
             let decoder = reader.unwrap().decode();
             if let Err(e) = decoder {
-                return Err(format!(
+                bail!(format!(
                     "Unable to decode {}: {}",
                     if self.frames.len() == 1 {
                         self.config.file.clone()
@@ -164,7 +155,7 @@ impl<'args> Media<'args> {
     ///
     /// Pulls all information from `self.config`.
     /// This function has potential to be the slowest in the rendering process if done with too many flags - be careful in here
-    pub fn transform(&mut self) -> Result<(), String> {
+    pub fn transform(&mut self) {
         let (mut nwidth, mut nheight) = self.frames[0].dimensions();
 
         // The following block calculates the final image size. Multiple factors influence it so it's best to calculate it once.
@@ -175,8 +166,8 @@ impl<'args> Media<'args> {
         } else if !self.config.preserve_dims {
             // Set the longest side to be 64px, with the shorter side scaling down proportionally to preserve aspect ratio
             (nwidth, nheight) = match nwidth > nheight {
-                true => (64, (64f64 * (nheight as f64 / nwidth as f64)) as u32),
-                false => ((64f64 * (nwidth as f64 / nheight as f64)) as u32, 64),
+                true => (64, (64 * nheight) / nwidth),
+                false => ((64 * nwidth) / nheight, 64),
             };
         }
 
@@ -204,8 +195,6 @@ impl<'args> Media<'args> {
                 flip_vertical_in_place(frame)
             }
         }
-
-        Ok(())
     }
 
     /// Plays the media file in the terminal. Must be initialized with `self.load_frames()` first.
@@ -214,7 +203,7 @@ impl<'args> Media<'args> {
     /// Can error out if `self` contains a video but the FPS cannot be determined.
     /// Also may fail on I/O or sound device errors.
     /// Can possibly fail on file I/O, but is only possible by race condition with another program modifying the storage directory.
-    pub fn render(&self) -> Result<(), String> {
+    pub fn render(&self) -> Result<()> {
         // Create buffer space in the terminal for the image before printing
         let h = self.frames[0].dimensions().1 / 2;
         for _ in 0..h {
@@ -222,68 +211,20 @@ impl<'args> Media<'args> {
         }
 
         // Turn off the fancy stuff in the terminal. I'm using this to later emulate C's `getchar`
-        enable_raw_mode().unwrap();
+        enable_raw_mode()?;
 
         // Reset cursor to where the top-left pixel should print
         print!("{}{}", MoveToColumn(0), MoveUp(h as u16));
 
         // Save this location for quicker cursor resets when new frames are printed
-        let pos = position().unwrap();
+        let pos = position()?;
 
-        // The code to play a video is a lot more complex, so it's not worthwhile to try to generalize this for photos vs. videos
-        if self.is_video {
-            // Following block uses regex to extract the video's fps from the output of `ffprobe`
-            lazy_static! {
-                static ref RE: Regex = Regex::new(r"(\d*\.?\d*) fps").unwrap();
-            }
+        match self.is_video {
+            true => self.display_video(pos),
+            false => self.display_image(&self.frames[0]),
+        }?;
 
-            let fps: f32;
-            if let Some(m) = RE
-                .captures(
-                    &String::from_utf8(
-                        Command::new("ffprobe")
-                            .args(["-hide_banner", "-i", &self.config.file])
-                            .output()
-                            .unwrap()
-                            .stderr,
-                    )
-                    .unwrap(),
-                )
-                .unwrap()
-                .get(1)
-            {
-                fps = str::parse(m.as_str()).unwrap();
-            } else {
-                return Err(String::from("Could not determine framerate of video!"));
-            }
-
-            // Based on the fps, calculate how long to wait between each frame printing
-            let delay = std::time::Duration::from_millis((1000.0 / fps) as u64);
-
-            // Rust's deallocation methods kill the audio if it is in a separate block from the video rendering.
-            // This means it won't be able to play if we slim down on repeated code by only using this if/else tree to spawn the audio when true.
-            // This is my least favorite piece of code
-            loop {
-                // Spawn the audio and keep it from deallocating with `let`
-                let res = if self.has_audio {
-                    let _audio = self.spawn_audio();
-                    self.play_video(delay, pos)
-                } else {
-                    self.play_video(delay, pos)
-                };
-
-                // Keep playing if true, otherwise the user requested an early exit (or loop_video == false)
-                match res? {
-                    true => continue,
-                    false => break,
-                };
-            }
-        } else {
-            // If we just have an image, we simply gotta display it
-            self.display_frame(&self.frames[0])?;
-        }
-
-        disable_raw_mode().unwrap();
+        disable_raw_mode()?;
         Ok(())
     }
 
@@ -291,7 +232,7 @@ impl<'args> Media<'args> {
     ///
     /// # Errors
     /// I/O errors can occur when flushing `stdout`
-    fn display_frame(&self, frame: &Image) -> Result<(), String> {
+    fn display_image(&self, frame: &Image) -> Result<()> {
         let (w, h) = frame.dimensions();
         let (mut x, mut y) = (0u32, 0u32);
         for _ in 0..(h / 2) * w {
@@ -317,7 +258,7 @@ impl<'args> Media<'args> {
             }
 
             if let Err(e) = std::io::stdout().flush() {
-                return Err(format!("\nFailed to print image at ({x}, {y}): {e}"));
+                bail!(format!("\nFailed to print image at ({x}, {y}): {e}"));
             }
 
             // Arithmetic to keep cursor in the right position to print
@@ -333,6 +274,50 @@ impl<'args> Media<'args> {
         Ok(())
     }
 
+    fn display_video(&self, cursor_position: (u16, u16)) -> Result<()> {
+        static FPS_ERROR: &str = "Could not determine framerate of video.";
+        static RE: OnceLock<Regex> = OnceLock::new();
+        let regex = RE.get_or_init(|| Regex::new(r"(\d*\.?\d*) fps").unwrap());
+
+        let fps: f32 = {
+            let fps_str = String::from_utf8(
+                Command::new("ffprobe")
+                    .args(["-hide_banner", "-i", &self.config.file])
+                    .output()?
+                    .stderr,
+            )?;
+
+            match regex.captures(&fps_str) {
+                Some(groups) if groups.len() > 0 => {
+                    let m = groups.get(1).unwrap();
+                    str::parse(m.as_str()).context(FPS_ERROR)?
+                }
+                Some(_) | None => {
+                    bail!(FPS_ERROR);
+                }
+            }
+        };
+
+        let frame_delay = std::time::Duration::from_millis((1000.0 / fps) as u64);
+
+        loop {
+            let video_state = {
+                let _audio_handle = match self.has_audio {
+                    true => Some(self.spawn_audio()),
+                    false => None,
+                };
+
+                (self.play_video(frame_delay, cursor_position), _audio_handle)
+            };
+
+            if !video_state.0? {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Plays a video stored in `self.frames`
     ///
     /// # Returns
@@ -341,9 +326,9 @@ impl<'args> Media<'args> {
     ///
     /// # Errors
     /// Can fail on I/O from `self.display_frame()`
-    fn play_video(&self, delay: Duration, pos: (u16, u16)) -> Result<bool, String> {
+    fn play_video(&self, delay: Duration, pos: (u16, u16)) -> Result<bool> {
         for frame in &self.frames {
-            self.display_frame(frame)?;
+            self.display_image(frame)?;
             std::thread::sleep(delay); // Pause between frames to preserve framerate
 
             if poll(Duration::from_millis(1)).unwrap() {
@@ -392,11 +377,17 @@ impl<'args> Media<'args> {
     /// Generate a path to a temporary directory
     ///
     /// Does not create the directory. This mostly exists as an easy location to modify the temporary storage solution later if needed in later versions of this.
-    fn get_tmp_dir() -> PathBuf {
-        let mut res = std::env::current_exe().unwrap();
-        res.pop();
-        res.push("TEMP");
-        res
+    fn get_tmp_dir() -> Result<PathBuf> {
+        let mut storage = std::env::current_exe().unwrap();
+        storage.pop();
+        storage.push("TEMP");
+        if !storage.exists() {
+            fs::create_dir(&storage).context(format!(
+                "Unable to create output directory at {}",
+                storage.display()
+            ))?;
+        }
+        Ok(storage)
     }
 }
 

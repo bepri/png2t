@@ -1,21 +1,22 @@
+#![doc = include_str!("../README.md")]
 use std::process::{Command, Stdio};
 
 mod cli;
-mod helpers;
+mod media;
+
+use anyhow::{bail, Result};
 
 use crate::cli::{Args, Parser};
-use crate::helpers::*;
+use crate::media::Media;
 
-fn main() -> Result<(), String> {
+fn main() -> Result<()> {
     if let Err(e) = Command::new("ffmpeg")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
     {
         if let std::io::ErrorKind::NotFound = e.kind() {
-            return Err(String::from(
-                "Could not find ffmpeg! Please install first or ensure it is on your PATH.",
-            ));
+            bail!("Could not find ffmpeg! Please install first or ensure it is on your PATH.",);
         }
     }
 
@@ -42,12 +43,12 @@ fn main() -> Result<(), String> {
     let args = Args::parse();
 
     let mut media = match Media::new(&args) {
-        Err(e) => return Err(format!("Couldn't load file {}: {}", args.file, e)),
+        Err(e) => bail!(format!("Couldn't load file {}: {}", args.file, e)),
         Ok(m) => m,
     };
 
     media.unpack_file()?;
-    media.transform()?;
+    media.transform();
     media.render()?;
 
     Ok(())
