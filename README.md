@@ -22,11 +22,7 @@ Visit https://rustup.rs/ for installation instructions!
 ### 2. Install `ffmpeg`
 Debian-based:
 ```
-sudo apt install -y ffmpeg
-```
-Fedora-based:
-```
-sudo dnf install -y ffmpeg
+sudo apt install -y libavfilter-dev libavutil-dev libavformat-dev libavdevice-dev libclang-dev
 ```
 
 ### 3. Clone this repository

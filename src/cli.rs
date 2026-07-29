@@ -1,5 +1,7 @@
 //! CLI parsing
 
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 
 pub use clap::Parser;
@@ -34,7 +36,7 @@ impl Dimensions {
 )]
 pub struct Args {
     #[arg(help = "Path to a media file to render.", name = "FILE")]
-    pub file: String,
+    pub file: PathBuf,
 
     #[arg(help = "Invert all color", long)]
     pub invert: bool,
